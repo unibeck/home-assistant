@@ -24,6 +24,7 @@ omit =
     homeassistant/components/alarm_control_panel/totalconnect.py
     homeassistant/components/alarm_control_panel/yale_smart_alarm.py
     homeassistant/components/alarmdecoder/*
+    homeassistant/components/ambiclimate/*
     homeassistant/components/ambient_station/*
     homeassistant/components/amcrest/*
     homeassistant/components/android_ip_webcam/*
