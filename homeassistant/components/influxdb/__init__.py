@@ -191,7 +191,7 @@ def setup(hass, config):
                 'domain': state.domain,
                 'entity_id': state.object_id,
             },
-            'time': event.time_fired,
+            'time': state.last_changed,
             'fields': {}
         }
         if _include_state:

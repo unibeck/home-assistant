@@ -7,6 +7,7 @@ from homeassistant.setup import setup_component
 import homeassistant.components.influxdb as influxdb
 from homeassistant.const import EVENT_STATE_CHANGED, STATE_OFF, STATE_ON, \
                    STATE_STANDBY
+from homeassistant.util.dt import now
 
 from tests.common import get_test_home_assistant
 
@@ -27,6 +28,24 @@ class TestInfluxDB(unittest.TestCase):
     def tearDown(self):
         """Clear data."""
         self.hass.stop()
+
+    def _setup(self, mock_client, **kwargs):
+        """Set up the client."""
+        config = {
+            'influxdb': {
+                'host': 'host',
+                'username': 'user',
+                'password': 'pass',
+                'exclude': {
+                    'entities': ['fake.blacklisted'],
+                    'domains': ['another_fake']
+                }
+            }
+        }
+        config['influxdb'].update(kwargs)
+        assert setup_component(self.hass, influxdb.DOMAIN, config)
+        self.handler_method = self.hass.bus.listen.call_args_list[0][0][1]
+        mock_client.return_value.write_points.reset_mock()
 
     def test_setup_config_full(self, mock_client):
         """Test the setup with full configuration."""
@@ -80,27 +99,11 @@ class TestInfluxDB(unittest.TestCase):
 
         assert not setup_component(self.hass, influxdb.DOMAIN, config)
 
-    def _setup(self, mock_client, **kwargs):
-        """Set up the client."""
-        config = {
-            'influxdb': {
-                'host': 'host',
-                'username': 'user',
-                'password': 'pass',
-                'exclude': {
-                    'entities': ['fake.blacklisted'],
-                    'domains': ['another_fake']
-                }
-            }
-        }
-        config['influxdb'].update(kwargs)
-        assert setup_component(self.hass, influxdb.DOMAIN, config)
-        self.handler_method = self.hass.bus.listen.call_args_list[0][0][1]
-        mock_client.return_value.write_points.reset_mock()
-
     def test_event_listener(self, mock_client):
         """Test the event listener."""
         self._setup(mock_client)
+
+        last_changed = now()
 
         # map of HA State to valid influxdb [state, value] fields
         valid = {
@@ -124,6 +127,7 @@ class TestInfluxDB(unittest.TestCase):
             }
             state = mock.MagicMock(
                 state=in_, domain='fake', entity_id='fake.entity-id',
+                last_changed=last_changed,
                 object_id='entity', attributes=attrs)
             event = mock.MagicMock(data={'new_state': state}, time_fired=12345)
             body = [{
@@ -132,7 +136,7 @@ class TestInfluxDB(unittest.TestCase):
                     'domain': 'fake',
                     'entity_id': 'entity',
                 },
-                'time': 12345,
+                'time': last_changed,
                 'fields': {
                     'longitude': 1.1,
                     'latitude': 2.2,
@@ -164,6 +168,8 @@ class TestInfluxDB(unittest.TestCase):
         """Test the event listener for missing units."""
         self._setup(mock_client)
 
+        last_changed = now()
+
         for unit in (None, ''):
             if unit:
                 attrs = {'unit_of_measurement': unit}
@@ -171,6 +177,7 @@ class TestInfluxDB(unittest.TestCase):
                 attrs = {}
             state = mock.MagicMock(
                 state=1, domain='fake', entity_id='fake.entity-id',
+                last_changed=last_changed,
                 object_id='entity', attributes=attrs)
             event = mock.MagicMock(data={'new_state': state}, time_fired=12345)
             body = [{
@@ -179,7 +186,7 @@ class TestInfluxDB(unittest.TestCase):
                     'domain': 'fake',
                     'entity_id': 'entity',
                 },
-                'time': 12345,
+                'time': last_changed,
                 'fields': {
                     'value': 1,
                 },
@@ -195,9 +202,12 @@ class TestInfluxDB(unittest.TestCase):
         """Test the event listener for missing units."""
         self._setup(mock_client)
 
+        last_changed = now()
+
         attrs = {'bignumstring':  '9' * 999, 'nonumstring': 'nan'}
         state = mock.MagicMock(
             state=8, domain='fake', entity_id='fake.entity-id',
+            last_changed=last_changed,
             object_id='entity', attributes=attrs)
         event = mock.MagicMock(data={'new_state': state}, time_fired=12345)
         body = [{
@@ -206,7 +216,7 @@ class TestInfluxDB(unittest.TestCase):
                 'domain': 'fake',
                 'entity_id': 'entity',
             },
-            'time': 12345,
+            'time': last_changed,
             'fields': {
                 'value': 8,
             },
@@ -222,9 +232,12 @@ class TestInfluxDB(unittest.TestCase):
         """Test the event listener against ignored states."""
         self._setup(mock_client)
 
+        last_changed = now()
+
         for state_state in (1, 'unknown', '', 'unavailable'):
             state = mock.MagicMock(
                 state=state_state, domain='fake', entity_id='fake.entity-id',
+                last_changed=last_changed,
                 object_id='entity', attributes={})
             event = mock.MagicMock(data={'new_state': state}, time_fired=12345)
             body = [{
@@ -233,7 +246,7 @@ class TestInfluxDB(unittest.TestCase):
                     'domain': 'fake',
                     'entity_id': 'entity',
                 },
-                'time': 12345,
+                'time': last_changed,
                 'fields': {
                     'value': 1,
                 },
@@ -252,9 +265,12 @@ class TestInfluxDB(unittest.TestCase):
         """Test the event listener against a blacklist."""
         self._setup(mock_client)
 
+        last_changed = now()
+
         for entity_id in ('ok', 'blacklisted'):
             state = mock.MagicMock(
                 state=1, domain='fake', entity_id='fake.{}'.format(entity_id),
+                last_changed=last_changed,
                 object_id=entity_id, attributes={})
             event = mock.MagicMock(data={'new_state': state}, time_fired=12345)
             body = [{
@@ -263,7 +279,7 @@ class TestInfluxDB(unittest.TestCase):
                     'domain': 'fake',
                     'entity_id': entity_id,
                 },
-                'time': 12345,
+                'time': last_changed,
                 'fields': {
                     'value': 1,
                 },
@@ -282,10 +298,13 @@ class TestInfluxDB(unittest.TestCase):
         """Test the event listener against a blacklist."""
         self._setup(mock_client)
 
+        last_changed = now()
+
         for domain in ('ok', 'another_fake'):
             state = mock.MagicMock(
                 state=1, domain=domain,
                 entity_id='{}.something'.format(domain),
+                last_changed=last_changed,
                 object_id='something', attributes={})
             event = mock.MagicMock(data={'new_state': state}, time_fired=12345)
             body = [{
@@ -294,7 +313,7 @@ class TestInfluxDB(unittest.TestCase):
                     'domain': domain,
                     'entity_id': 'something',
                 },
-                'time': 12345,
+                'time': last_changed,
                 'fields': {
                     'value': 1,
                 },
@@ -325,9 +344,12 @@ class TestInfluxDB(unittest.TestCase):
         self.handler_method = self.hass.bus.listen.call_args_list[0][0][1]
         mock_client.return_value.write_points.reset_mock()
 
+        last_changed = now()
+
         for entity_id in ('included', 'default'):
             state = mock.MagicMock(
                 state=1, domain='fake', entity_id='fake.{}'.format(entity_id),
+                last_changed=last_changed,
                 object_id=entity_id, attributes={})
             event = mock.MagicMock(data={'new_state': state}, time_fired=12345)
             body = [{
@@ -336,7 +358,7 @@ class TestInfluxDB(unittest.TestCase):
                     'domain': 'fake',
                     'entity_id': entity_id,
                 },
-                'time': 12345,
+                'time': last_changed,
                 'fields': {
                     'value': 1,
                 },
@@ -367,10 +389,13 @@ class TestInfluxDB(unittest.TestCase):
         self.handler_method = self.hass.bus.listen.call_args_list[0][0][1]
         mock_client.return_value.write_points.reset_mock()
 
+        last_changed = now()
+
         for domain in ('fake', 'another_fake'):
             state = mock.MagicMock(
                 state=1, domain=domain,
                 entity_id='{}.something'.format(domain),
+                last_changed=last_changed,
                 object_id='something', attributes={})
             event = mock.MagicMock(data={'new_state': state}, time_fired=12345)
             body = [{
@@ -379,7 +404,7 @@ class TestInfluxDB(unittest.TestCase):
                     'domain': domain,
                     'entity_id': 'something',
                 },
-                'time': 12345,
+                'time': last_changed,
                 'fields': {
                     'value': 1,
                 },
@@ -411,10 +436,13 @@ class TestInfluxDB(unittest.TestCase):
         self.handler_method = self.hass.bus.listen.call_args_list[0][0][1]
         mock_client.return_value.write_points.reset_mock()
 
+        last_changed = now()
+
         for domain in ('fake', 'another_fake'):
             state = mock.MagicMock(
                 state=1, domain=domain,
                 entity_id='{}.something'.format(domain),
+                last_changed=last_changed,
                 object_id='something', attributes={})
             event = mock.MagicMock(data={'new_state': state}, time_fired=12345)
             body = [{
@@ -423,7 +451,7 @@ class TestInfluxDB(unittest.TestCase):
                     'domain': domain,
                     'entity_id': 'something',
                 },
-                'time': 12345,
+                'time': last_changed,
                 'fields': {
                     'value': 1,
                 },
@@ -442,6 +470,7 @@ class TestInfluxDB(unittest.TestCase):
             state = mock.MagicMock(
                 state=1, domain='other',
                 entity_id='other.{}'.format(entity_id),
+                last_changed=last_changed,
                 object_id=entity_id, attributes={})
             event = mock.MagicMock(data={'new_state': state}, time_fired=12345)
             body = [{
@@ -450,7 +479,7 @@ class TestInfluxDB(unittest.TestCase):
                     'domain': 'other',
                     'entity_id': entity_id,
                 },
-                'time': 12345,
+                'time': last_changed,
                 'fields': {
                     'value': 1,
                 },
@@ -468,6 +497,8 @@ class TestInfluxDB(unittest.TestCase):
     def test_event_listener_invalid_type(self, mock_client):
         """Test the event listener when an attribute has an invalid type."""
         self._setup(mock_client)
+
+        last_changed = now()
 
         # map of HA State to valid influxdb [state, value] fields
         valid = {
@@ -487,6 +518,7 @@ class TestInfluxDB(unittest.TestCase):
             }
             state = mock.MagicMock(
                 state=in_, domain='fake', entity_id='fake.entity-id',
+                last_changed=last_changed,
                 object_id='entity', attributes=attrs)
             event = mock.MagicMock(data={'new_state': state}, time_fired=12345)
             body = [{
@@ -495,7 +527,7 @@ class TestInfluxDB(unittest.TestCase):
                     'domain': 'fake',
                     'entity_id': 'entity',
                 },
-                'time': 12345,
+                'time': last_changed,
                 'fields': {
                     'longitude': 1.1,
                     'latitude': 2.2,
@@ -531,9 +563,12 @@ class TestInfluxDB(unittest.TestCase):
         self.handler_method = self.hass.bus.listen.call_args_list[0][0][1]
         mock_client.return_value.write_points.reset_mock()
 
+        last_changed = now()
+
         for entity_id in ('ok', 'blacklisted'):
             state = mock.MagicMock(
                 state=1, domain='fake', entity_id='fake.{}'.format(entity_id),
+                last_changed=last_changed,
                 object_id=entity_id, attributes={})
             event = mock.MagicMock(data={'new_state': state}, time_fired=12345)
             body = [{
@@ -542,7 +577,7 @@ class TestInfluxDB(unittest.TestCase):
                     'domain': 'fake',
                     'entity_id': entity_id,
                 },
-                'time': 12345,
+                'time': last_changed,
                 'fields': {
                     'value': 1,
                 },
@@ -571,11 +606,14 @@ class TestInfluxDB(unittest.TestCase):
         self.handler_method = self.hass.bus.listen.call_args_list[0][0][1]
         mock_client.return_value.write_points.reset_mock()
 
+        last_changed = now()
+
         attrs = {
             'unit_of_measurement': 'foobars',
         }
         state = mock.MagicMock(
             state='foo', domain='fake', entity_id='fake.entity-id',
+            last_changed=last_changed,
             object_id='entity', attributes=attrs)
         event = mock.MagicMock(data={'new_state': state}, time_fired=12345)
         body = [{
@@ -584,7 +622,7 @@ class TestInfluxDB(unittest.TestCase):
                 'domain': 'fake',
                 'entity_id': 'entity',
             },
-            'time': 12345,
+            'time': last_changed,
             'fields': {
                 'state': 'foo',
                 'unit_of_measurement_str': 'foobars',
@@ -611,6 +649,8 @@ class TestInfluxDB(unittest.TestCase):
         self.handler_method = self.hass.bus.listen.call_args_list[0][0][1]
         mock_client.return_value.write_points.reset_mock()
 
+        last_changed = now()
+
         attrs = {
             'friendly_fake': 'tag_str',
             'field_fake': 'field_str',
@@ -618,6 +658,7 @@ class TestInfluxDB(unittest.TestCase):
         state = mock.MagicMock(
             state=1, domain='fake',
             entity_id='fake.something',
+            last_changed=last_changed,
             object_id='something', attributes=attrs)
         event = mock.MagicMock(data={'new_state': state}, time_fired=12345)
         body = [{
@@ -627,7 +668,7 @@ class TestInfluxDB(unittest.TestCase):
                 'entity_id': 'something',
                 'friendly_fake': 'tag_str'
             },
-            'time': 12345,
+            'time': last_changed,
             'fields': {
                 'value': 1,
                 'field_fake_str': 'field_str'
@@ -668,6 +709,8 @@ class TestInfluxDB(unittest.TestCase):
         self.handler_method = self.hass.bus.listen.call_args_list[0][0][1]
         mock_client.return_value.write_points.reset_mock()
 
+        last_changed = now()
+
         test_components = [
             {'domain': 'sensor', 'id': 'fake_humidity', 'res': 'humidity'},
             {'domain': 'binary_sensor', 'id': 'fake_motion', 'res': 'motion'},
@@ -678,6 +721,7 @@ class TestInfluxDB(unittest.TestCase):
             state = mock.MagicMock(
                 state=1, domain=comp['domain'],
                 entity_id=comp['domain'] + '.' + comp['id'],
+                last_changed=last_changed,
                 object_id=comp['id'], attributes={})
             event = mock.MagicMock(data={'new_state': state}, time_fired=12345)
             body = [{
@@ -686,7 +730,7 @@ class TestInfluxDB(unittest.TestCase):
                     'domain': comp['domain'],
                     'entity_id': comp['id']
                 },
-                'time': 12345,
+                'time': last_changed,
                 'fields': {
                     'value': 1,
                 },
@@ -712,9 +756,12 @@ class TestInfluxDB(unittest.TestCase):
         self.handler_method = self.hass.bus.listen.call_args_list[0][0][1]
         mock_client.return_value.write_points.reset_mock()
 
+        last_changed = now()
+
         state = mock.MagicMock(
-            state=1, domain='fake', entity_id='entity.id', object_id='entity',
-            attributes={})
+            state=1, domain='fake', entity_id='entity.id',
+            last_changed=last_changed,
+            object_id='entity', attributes={})
         event = mock.MagicMock(data={'new_state': state}, time_fired=12345)
         mock_client.return_value.write_points.side_effect = \
             IOError('foo')
@@ -740,9 +787,12 @@ class TestInfluxDB(unittest.TestCase):
         """Test the event listener to drop old events."""
         self._setup(mock_client)
 
+        last_changed = now()
+
         state = mock.MagicMock(
-            state=1, domain='fake', entity_id='entity.id', object_id='entity',
-            attributes={})
+            state=1, domain='fake', entity_id='entity.id',
+            last_changed=last_changed,
+            object_id='entity', attributes={})
         event = mock.MagicMock(data={'new_state': state}, time_fired=12345)
 
         monotonic_time = 0
